@@ -7,8 +7,9 @@
 #include <string>
 #include <unistd.h>
 #include "Datagram.h"
+#include "rcp_calls.h"
 
-#define PORT    23
+#define INTERMEDIATE_PORT 2300
 
 class Client {
 public:
@@ -18,101 +19,81 @@ private:
     DatagramSocket sendRcvSocket;
 
 public:
-    void runClient() {
+    void sendData() {
     std::string filename = "message.txt";
     std::string mode = "oCTeT";
-    for (int i = 0; i <= 11; i++)
+    std::vector<uint8_t> data;
+    for (char c: filename)
     {
-        //construct string
-        std::vector<uint8_t> message;
-        message.push_back(0x00);
-        std::cout << "[MESSAGE "<< i <<"] \n[CLIENT] ";
-        if (i == 11)
-        {
-            message.push_back(0x99);
-            std::cout << " Preparing INVALID (0x99) op" << std::endl;
-        }
-        else if(i % 2 == 0){
-            message.push_back(0x01);
-            std::cout << "Preparing READ (0x01) op" << std::endl;
-        }
-        else {
-            message.push_back(0x02);
-            std::cout << " Preparing WRITE (0x02) op" << std::endl;
-        }
-        for (char c: filename)
-        {
-            message.push_back(static_cast<uint8_t>(c));
-        }
-        message.push_back(0x00);
-        for (char c: mode)
-        {
-            message.push_back(static_cast<uint8_t>(c));
-        }
-        message.push_back(0x00);
+        data.push_back(static_cast<uint8_t>(c));
+    }
+        data.push_back(0x00);
+    for (char c: mode)
+    {
+        data.push_back(static_cast<uint8_t>(c));
+    }
+        data.push_back(0x00);
 
         //SEND PACKET TO PORT 23
-        DatagramPacket request(message, message.size(), InetAddress::getLocalHost(), PORT);
-        std::cout << "To host: " << request.getAddressAsString() << std::endl;
-        std::cout << "Destination host port: " << request.getPort() << std::endl;
-        int len = request.getLength();
+        DatagramPacket sendData(data, data.size(), InetAddress::getLocalHost(), INTERMEDIATE_PORT);
+        std::cout << "To host: " << sendData.getAddressAsString() << std::endl;
+        std::cout << "Destination host port: " << sendData.getPort() << std::endl;
+        int len = sendData.getLength();
         std::cout << "String Data: " << std::endl;
-        std::cout << std::string(static_cast<const char *>(request.getData()), len) << std::endl; //
-        std::cout << "Raw Hex Data: ";
-        for (size_t i = 0; i < request.getLength(); i++) {
-            uint8_t byte = static_cast<const uint8_t *>(request.getData())[i];
-            // Print each byte as 2-character hexadecimal
-            if (byte < 16) { // If the byte is less than 0x10, pad with a '0'
-                std::cout << "0";
-            }
-            std::cout << std::hex << static_cast<int>(byte) << " ";
-        }
+        std::cout << std::string(static_cast<const char *>(sendData.getData()), len) << std::endl;
         std::cout << std::endl;
 
         try {
-            sendRcvSocket.send(request);
+            sendRcvSocket.send(sendData);
         } catch (const std::runtime_error& e) {
             std::cerr << e.what();
             exit(1);
         }
-        std::cout << "[CLIENT] Packet sent." << std::endl;
+        std::cout << "[CLIENT] Data sent." << std::endl;
 
         //===========================================================================================================
         // RCV PACKET
-        std::vector<uint8_t> in(100);
-        DatagramPacket receivePacket(in, in.size());
+        std::vector<uint8_t> ack(100);
+        DatagramPacket ackPacket(ack, ack.size());
 
         try {
-            std::cout << "[CLIENT] awaiting response from intermediate host...\n" << std::endl;
-            sendRcvSocket.receive(receivePacket);
+            std::cout << "[CLIENT] Waiting for host ACK...\n" << std::endl;
+            sendRcvSocket.receive(ackPacket);
         } catch(const std::runtime_error& e) {
             std::cerr << e.what();
             exit(1);
         }
 
         // Process the received datagram
-        std::cout << "[CLIENT] PACKET RECIEVED" << std::endl;
-        std::cout << "From host: " << receivePacket.getAddressAsString() << std::endl;
-        std::cout << "Host port: " << receivePacket.getPort() << std::endl;
-        std::cout << "Response Code: ";
-        for (size_t i = 0; i < receivePacket.getLength(); i++) {
-            uint8_t byte = static_cast<const uint8_t *>(receivePacket.getData())[i];
-            // Print each byte as 2-character hexadecimal
-            if (byte < 16) { // If the byte is less than 0x10, pad with a '0'
-                std::cout << "0";
-            }
-            std::cout << std::hex << static_cast<int>(byte) << " ";
-        }
-        std::cout << std::endl;
-        std::cout << "===========================================\n\n";
-        //Socket will close with RAII.
+        std::cout << "[CLIENT] Host ACK RCV" << std::endl;
+        return;
     }
-    sendRcvSocket.~DatagramSocket();
-	return;
+
+    void rcvServAck()
+    {
+        waitForSignal(sendRcvSocket);
+
+        std::cout << "[CLIENT] Waiting for Server Ack" << std::endl;
+
+        std::vector<uint8_t> request(100);
+        DatagramPacket reqPacket(request, request.size(), InetAddress::getLocalHost(), INTERMEDIATE_PORT);
+        sendRcvSocket.send(reqPacket);
+
+        std::vector<uint8_t> message(100);
+        DatagramPacket ackPacket(message, message.size());
+        sendRcvSocket.receive(ackPacket);
+        std::cout << "gothere" << std::endl;
+
     }
 };
 
 int main(int argc, char ** argv)
 {
-    Client().runClient();
+    Client client;
+    while(true)
+    {
+        client.sendData();
+        client.rcvServAck();
+    }
+
 }

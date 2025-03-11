@@ -13,6 +13,9 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
+#ifndef DATAGRAM_H
+#define DATAGRAM_H
+
 class InetAddress {
 public:
     static in_addr_t getLocalHost() {
@@ -139,3 +142,4 @@ private:
     int socket_fd;
     static const size_t MAXLINE = 1024;
 };
+#endif
