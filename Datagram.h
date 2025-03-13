@@ -6,12 +6,15 @@
 
 #include <vector>
 #include <exception>
-#include <cstring>
+#include <string>
 #include <sys/errno.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <stdexcept>
+#include <cstring>
+#include <unistd.h>
 
 #ifndef DATAGRAM_H
 #define DATAGRAM_H

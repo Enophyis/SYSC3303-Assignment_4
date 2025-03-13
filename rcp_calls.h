@@ -1,35 +1,26 @@
-//
-// Created by enophyis on 10/03/25.
-//
-
-#include "Datagram.h"
 #ifndef RCP_CALLS_H
 #define RCP_CALLS_H
 
-void waitForSignal(DatagramSocket &sendRcvSocket)
+#include "Datagram.h"
+#include <string>
+#include <vector>
+
+// send a string msg to a given port on localhost
+inline void sendMessage(DatagramSocket &sock, const std::string &msg, int port)
 {
-    std::vector<uint8_t> signalData(100);
-    DatagramPacket signalPacket(signalData,signalData.size());
-    sendRcvSocket.receive(signalPacket);
-}
-void sendSignal(DatagramSocket &sendRcvSocket, in_port_t port)
-{
-    std::vector<uint8_t> signal(100);
-    DatagramPacket signalPacket(signal, signal.size(), InetAddress::getLocalHost(), port);
-    sendRcvSocket.send(signalPacket);
+    std::vector<uint8_t> data(msg.begin(), msg.end());
+    DatagramPacket packet(data, data.size(), InetAddress::getLocalHost(), port);
+    sock.send(packet);
 }
 
-void sendMessage(DatagramSocket &sendRcvSocket, std::vector<uint8_t> message, in_port_t port)
+// receive a string msg from the socket
+inline std::string receiveMessage(DatagramSocket &sock)
 {
-    DatagramPacket messagePacket(message, message.size(), InetAddress::getLocalHost(), port);
-    sendRcvSocket.send(messagePacket);
-}
-std::vector<uint8_t> receiveMessage(DatagramSocket &sendRcvSocket)
-{
-    std::vector<uint8_t> messageData(100);
-    DatagramPacket messagePacket(messageData,messageData.size());
-    sendRcvSocket.receive(messagePacket);
-    return messageData;
+    std::vector<uint8_t> buffer(1024);
+    DatagramPacket packet(buffer, buffer.size());
+    sock.receive(packet);
+    int len = packet.getLength();
+    return std::string(reinterpret_cast<char*>(buffer.data()), len);
 }
 
-#endif //RCP_CALLS_H
+#endif // RCP_CALLS_H
