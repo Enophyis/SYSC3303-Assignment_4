@@ -6,91 +6,90 @@
 #include <mutex>
 #include <condition_variable>
 
-#define INTERMEDIATE_PORT 2300  // Port for receiving client messages.
-#define SERVER_PORT       6900  // Port for sending messages to server.
-#define CLIENT_PORT       9000  // Port to send ack/replies back to client.
+#define INTERMEDIATE_PORT 2300  // port for receiving client messages
+#define SERVER_PORT       6900  // port where server listens
+#define CLIENT_PORT       9000  // port to send replies back to client
 
 class IntermediateServer {
 public:
     IntermediateServer()
-        : clientSock(INTERMEDIATE_PORT), serverSock() {}
+        : clientSocket(INTERMEDIATE_PORT), serverSocket() {}
 
+    // start the client and server handler threads
     void run() {
-        // Start two threads: one for client handling and one for server handling.
-        std::thread tClient(&IntermediateServer::clientSide, this);
-        std::thread tServer(&IntermediateServer::serverSide, this);
-
-        tClient.join();
-        tServer.join();
+        std::thread clientHandler(&IntermediateServer::handleClientSide, this);
+        std::thread serverHandler(&IntermediateServer::handleServerSide, this);
+        clientHandler.join();
+        serverHandler.join();
     }
 
 private:
-    DatagramSocket clientSock; // Bound to INTERMEDIATE_PORT for client messages.
-    DatagramSocket serverSock; // Ephemeral socket used for server communications.
+    // socket used for client communication (bound to intermediate_port)
+    DatagramSocket clientSocket;
+    // ephemeral socket for server communication
+    DatagramSocket serverSocket;
 
-    std::mutex m;
-    std::condition_variable cv;
-    bool hasData = false;
-    std::string dataFromClient;
+    std::mutex dataMutex;
+    std::condition_variable dataCondVar;
+    bool newDataAvailable = false;
+    std::string clientData;
 
-    // Thread function to handle client-side operations.
-    void clientSide() {
+    // thread function to handle messages from the client
+    void handleClientSide() {
         while (true) {
-            // Wait for a message from the client.
-            std::cout << "[Intermediate-Client] Waiting for client message on port "
+            std::cout << "[clienthandler] waiting for a message from the client on port "
                       << INTERMEDIATE_PORT << "..." << std::endl;
-            std::string clientMsg = receiveMessage(clientSock);
-            std::cout << "[Intermediate-Client] Received from client." << std::endl;
+            std::string msgFromClient = receiveMessage(clientSocket);
+            std::cout << "[clienthandler] received message from client." << std::endl;
 
+            // store the message safely
             {
-                // Store the message in a thread-safe way.
-                std::unique_lock<std::mutex> lock(m);
-                dataFromClient = clientMsg;
-                hasData = true;
+                std::unique_lock<std::mutex> lock(dataMutex);
+                clientData = msgFromClient;
+                newDataAvailable = true;
             }
-            cv.notify_one();
+            dataCondVar.notify_one();
 
-            // Send an immediate ack to the client.
-            sendMessage(clientSock, "intermediate ack: data rcvd", CLIENT_PORT);
-            std::cout << "[Intermediate-Client] Sent immediate ack to client on port "
-                      << CLIENT_PORT << std::endl;
+            // send an immediate ack back to the client
+            sendMessage(clientSocket, "intermediate ack: data rcvd", CLIENT_PORT);
+            std::cout << "[clienthandler] sent ack to client on port " << CLIENT_PORT << "." << std::endl;
         }
     }
 
-    // Thread function to handle server-side operations.
-    void serverSide() {
+    // thread function to forward client data to the server and return the reply
+    void handleServerSide() {
         while (true) {
-            // Wait until clientSide has received data.
+            // wait until new data is available from the client
             {
-                std::unique_lock<std::mutex> lock(m);
-                cv.wait(lock, [this] { return hasData; });
+                std::unique_lock<std::mutex> lock(dataMutex);
+                dataCondVar.wait(lock, [this] { return newDataAvailable; });
             }
-            std::cout << "[Intermediate-Server] Forwarding data to server on port "
-                      << SERVER_PORT << std::endl;
-            // Forward the stored client message to the server.
-            sendMessage(serverSock, dataFromClient, SERVER_PORT);
+            std::cout << "[serverhandler] forwarding client data to server on port "
+                      << SERVER_PORT << "..." << std::endl;
+            // send the stored client message to the server
+            sendMessage(serverSocket, clientData, SERVER_PORT);
 
-            // Wait for the server’s reply (typically an ack request).
-            std::string serverReply = receiveMessage(serverSock);
-            std::cout << "[Intermediate-Server] Received reply from server." << std::endl;
+            // wait for the server's reply
+            std::string replyFromServer = receiveMessage(serverSocket);
+            std::cout << "[serverhandler] received reply from server." << std::endl;
 
-            // Send the server's reply back to the client.
-            sendMessage(clientSock, serverReply, CLIENT_PORT);
-            std::cout << "[Intermediate-Server] Sent reply back to client on port "
-                      << CLIENT_PORT << std::endl;
+            // send the server's reply back to the client
+            sendMessage(clientSocket, replyFromServer, CLIENT_PORT);
+            std::cout << "[serverhandler] sent reply back to client on port "
+                      << CLIENT_PORT << "." << std::endl;
 
-            // Mark the data as consumed.
+            // mark data as processed
             {
-                std::unique_lock<std::mutex> lock(m);
-                hasData = false;
+                std::unique_lock<std::mutex> lock(dataMutex);
+                newDataAvailable = false;
             }
-            cv.notify_one();
+            dataCondVar.notify_one();
         }
     }
 };
 
 int main() {
-    IntermediateServer is;
-    is.run();
+    IntermediateServer intermediate;
+    intermediate.run();
     return 0;
 }
