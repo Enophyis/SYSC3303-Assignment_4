@@ -6,106 +6,90 @@
 #include <mutex>
 #include <condition_variable>
 
-#define INTERMEDIATE_PORT 2300
-#define SERVER_PORT       6900
-#define CLIENT_PORT       9000
+#define INTERMEDIATE_PORT 2300  // Port for receiving client messages.
+#define SERVER_PORT       6900  // Port for sending messages to server.
+#define CLIENT_PORT       9000  // Port to send ack/replies back to client.
 
 class IntermediateServer {
 public:
     IntermediateServer()
-            : clientSock(INTERMEDIATE_PORT), serverSock() {}
+        : clientSock(INTERMEDIATE_PORT), serverSock() {}
 
     void run() {
-        // two threads: one for client side, one for server side
-        std::thread tClient([this]{ clientSide(); });
-        std::thread tServer([this]{ serverSide(); });
+        // Start two threads: one for client handling and one for server handling.
+        std::thread tClient(&IntermediateServer::clientSide, this);
+        std::thread tServer(&IntermediateServer::serverSide, this);
 
         tClient.join();
         tServer.join();
     }
 
 private:
-    DatagramSocket clientSock; // bound to 2300
-    DatagramSocket serverSock; // ephemeral port
+    DatagramSocket clientSock; // Bound to INTERMEDIATE_PORT for client messages.
+    DatagramSocket serverSock; // Ephemeral socket used for server communications.
+
     std::mutex m;
     std::condition_variable cv;
-
     bool hasData = false;
     std::string dataFromClient;
 
-    // handle client steps 1,2,3,7,8
+    // Thread function to handle client-side operations.
     void clientSide() {
         while (true) {
-            // step 1: receive data
-            std::cout << "[intermediate-client] waiting for client data\n";
-            auto msg = receiveMessage(clientSock);
+            // Wait for a message from the client.
+            std::cout << "[Intermediate-Client] Waiting for client message on port "
+                      << INTERMEDIATE_PORT << "..." << std::endl;
+            std::string clientMsg = receiveMessage(clientSock);
+            std::cout << "[Intermediate-Client] Received from client." << std::endl;
 
-            if (msg == "final ack request") {
-                // step 8: final ack
-                std::cout << "[intermediate-client] final ack to client\n";
-                sendMessage(clientSock, "final ack from intermediate", CLIENT_PORT);
-                continue;
+            {
+                // Store the message in a thread-safe way.
+                std::unique_lock<std::mutex> lock(m);
+                dataFromClient = clientMsg;
+                hasData = true;
             }
-            else if (msg == "forward request") {
-                // step 3 done. we'll let server side handle forwarding
-                std::cout << "[intermediate-client] got forward request\n";
-                continue;
-            }
-            else {
-                // assume step 1: got real data
-                std::cout << "[intermediate-client] got client data: " << msg << "\n";
+            cv.notify_one();
 
-                {
-                    std::unique_lock<std::mutex> lock(m);
-                    dataFromClient = msg;
-                    hasData = true;
-                }
-                cv.notify_all();
-
-                // step 2: immediate ack
-                std::cout << "[intermediate-client] sending ack to client\n";
-                sendMessage(clientSock, "intermediate ack: data rcvd", CLIENT_PORT);
-            }
+            // Send an immediate ack to the client.
+            sendMessage(clientSock, "intermediate ack: data rcvd", CLIENT_PORT);
+            std::cout << "[Intermediate-Client] Sent immediate ack to client on port "
+                      << CLIENT_PORT << std::endl;
         }
     }
 
-    // handle server steps 4,5,6 (plus the actual forward from step 3)
+    // Thread function to handle server-side operations.
     void serverSide() {
         while (true) {
-            // wait until we have data to forward
+            // Wait until clientSide has received data.
             {
                 std::unique_lock<std::mutex> lock(m);
-                cv.wait(lock, [this]{ return hasData; });
+                cv.wait(lock, [this] { return hasData; });
             }
+            std::cout << "[Intermediate-Server] Forwarding data to server on port "
+                      << SERVER_PORT << std::endl;
+            // Forward the stored client message to the server.
+            sendMessage(serverSock, dataFromClient, SERVER_PORT);
 
-            // step 4: forward data to server
-            std::cout << "[intermediate-server] forwarding data to server\n";
-            {
-                std::unique_lock<std::mutex> lock(m);
-                sendMessage(serverSock, dataFromClient, SERVER_PORT);
-            }
+            // Wait for the server’s reply (typically an ack request).
+            std::string serverReply = receiveMessage(serverSock);
+            std::cout << "[Intermediate-Server] Received reply from server." << std::endl;
 
-            // step 5: server wants ack
-            std::cout << "[intermediate-server] waiting for server ack request\n";
-            auto req = receiveMessage(serverSock);
-            std::cout << "[intermediate-server] server says: " << req << "\n";
+            // Send the server's reply back to the client.
+            sendMessage(clientSock, serverReply, CLIENT_PORT);
+            std::cout << "[Intermediate-Server] Sent reply back to client on port "
+                      << CLIENT_PORT << std::endl;
 
-            // step 6: ack to server
-            std::cout << "[intermediate-server] sending ack to server\n";
-            sendMessage(serverSock, "intermediate ack to server", SERVER_PORT);
-
-            // after step 6, we've done the forward. can mark data as consumed
+            // Mark the data as consumed.
             {
                 std::unique_lock<std::mutex> lock(m);
                 hasData = false;
             }
-            cv.notify_all();
+            cv.notify_one();
         }
     }
 };
 
-int main()
-{
+int main() {
     IntermediateServer is;
     is.run();
     return 0;
